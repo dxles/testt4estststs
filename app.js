@@ -200,12 +200,15 @@ async function initSphere() {
 }
 
 /* ============================ SCROLL CHOREOGRAPHY ============================
-   The 13-step pinned sequence. Hidden/blurred start states are applied ONLY
-   when motion is allowed — with prefers-reduced-motion the page renders fully
-   readable with zero animation. */
+   The 13-step pinned sequence. Runs the same for every visitor, phone or
+   desktop, regardless of the OS-level "reduce motion" flag — prefers-reduced-
+   motion still trims the loader intro, custom cursor and WebGL sphere loop
+   above (and the CSS fallback still applies for anyone whose browser blocks
+   JS animation entirely), but the core scroll story always plays. */
 function initScrollChoreography() {
   if (!window.gsap || !window.ScrollTrigger) return;
   gsap.registerPlugin(ScrollTrigger);
+  ScrollTrigger.config({ ignoreMobileResize: true });
 
   // Nav state + progress rail (motion-independent, safe for everyone)
   ScrollTrigger.create({
@@ -227,12 +230,10 @@ function initScrollChoreography() {
     });
   });
 
-  if (CONFIG.reduced) return; // full content stays visible, no pins
-
   /* ---------- STEP 1 · HERO: "dxles" bleeds off-screen, scales into place ---------- */
   const heroName = document.getElementById('hero-name');
   gsap.timeline({
-    scrollTrigger: { trigger: '#hero', start: 'top top', end: '+=130%', scrub: 1, pin: true },
+    scrollTrigger: { trigger: '#hero', start: 'top top', end: '+=130%', scrub: 1, pin: true, anticipatePin: 1, invalidateOnRefresh: true },
   })
     .fromTo(heroName,
       { scale: () => (CONFIG.isMobile ? 3.6 : 6), yPercent: 10 },
@@ -249,6 +250,7 @@ function initScrollChoreography() {
       scrollTrigger: {
         trigger: '#work', start: 'top top',
         end: `+=${projects.length * 95 + 60}%`, scrub: 1, pin: true,
+        anticipatePin: 1, invalidateOnRefresh: true,
       },
     });
     workTl.fromTo('#work .section-head', { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.5 }, 0);
@@ -270,7 +272,7 @@ function initScrollChoreography() {
   if (cols.length) {
     gsap.set(cols, { filter: 'blur(14px)', opacity: 0.18 });
     const sysTl = gsap.timeline({
-      scrollTrigger: { trigger: '#systems', start: 'top top', end: '+=340%', scrub: 1, pin: true },
+      scrollTrigger: { trigger: '#systems', start: 'top top', end: '+=340%', scrub: 1, pin: true, anticipatePin: 1 },
     });
     sysTl.fromTo('#systems .section-head', { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.5 }, 0);
     cols.forEach((col, i) => {
@@ -285,7 +287,7 @@ function initScrollChoreography() {
   if (blocks.length) {
     gsap.set(blocks, { opacity: 0, y: 42 });
     const aboutTl = gsap.timeline({
-      scrollTrigger: { trigger: '#about', start: 'top top', end: '+=280%', scrub: 1, pin: true },
+      scrollTrigger: { trigger: '#about', start: 'top top', end: '+=280%', scrub: 1, pin: true, anticipatePin: 1 },
     });
     aboutTl.fromTo('#about .section-head', { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.5 }, 0);
     blocks.forEach((b, i) => {
@@ -311,6 +313,8 @@ function initScrollChoreography() {
       opacity: 1, y: 0, duration: 0.9, stagger: 0.12, ease: 'power3.out',
       scrollTrigger: { trigger: '#contact', start: 'top 78%', toggleActions: 'play none none reverse' },
     });
+
+  requestAnimationFrame(() => ScrollTrigger.refresh());
 }
 
 function setActiveIndex(i) {
