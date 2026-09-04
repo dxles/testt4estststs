@@ -58,6 +58,22 @@ function initCursor() {
   });
 }
 
+/* ============================ NAV SMOOTH SCROLL ============================
+   Replaces the removed CSS `scroll-behavior:smooth` (which fought
+   ScrollTrigger's continuous scrub math on every wheel event). This only
+   fires on discrete nav-link clicks, so it doesn't conflict with pinning. */
+function initNavSmoothScroll() {
+  document.querySelectorAll('a[href^="#"]').forEach((a) => {
+    a.addEventListener('click', (e) => {
+      const id = a.getAttribute('href').slice(1);
+      const target = id ? document.getElementById(id) : document.body;
+      if (!target) return;
+      e.preventDefault();
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+}
+
 /* ============================ MAGNETIC INTERACTIONS ============================ */
 function initMagneticElements() {
   if (!CONFIG.fine || CONFIG.reduced || !window.gsap) return;
@@ -325,9 +341,19 @@ async function boot() {
   // applied inside the animation functions, which guard on window.gsap.
   initLoader();
   initCursor();
+  initNavSmoothScroll();
   initMagneticElements();
   initScrollChoreography();
   initSphere();
+
+  // Web fonts (Instrument Serif etc.) often swap in AFTER ScrollTrigger has
+  // already measured section heights using the fallback font. That height
+  // change desyncs every pin's start/end point from the actual scroll
+  // position — the classic cause of pinned sections overlapping/double-
+  // triggering. Recalculate once fonts are actually in place.
+  if (window.ScrollTrigger && document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => ScrollTrigger.refresh());
+  }
 }
 
 boot();
