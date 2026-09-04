@@ -200,15 +200,25 @@ async function initSphere() {
 }
 
 /* ============================ SCROLL CHOREOGRAPHY ============================
-   The 13-step pinned sequence. Runs the same for every visitor, phone or
-   desktop, regardless of the OS-level "reduce motion" flag — prefers-reduced-
-   motion still trims the loader intro, custom cursor and WebGL sphere loop
-   above (and the CSS fallback still applies for anyone whose browser blocks
-   JS animation entirely), but the core scroll story always plays. */
+   Locked, one-step-per-scroll sequencing. Each pinned section (Hero, Work,
+   Toolkit, About) is a small paused GSAP timeline with labeled steps
+   ("step0", "step1", ...). Instead of tying the timeline's progress directly
+   to raw scroll distance (the old `scrub` approach — which is exactly what
+   let a fast/inertial scroll blast through several steps in one go and made
+   two sections visually overlap), each scroll "notch" is caught by GSAP's
+   Observer plugin, advances the timeline by exactly one labeled step, and is
+   IGNORED while that step's tween is still playing. The page cannot move to
+   the next animation until the current one finishes — and it holds in place
+   the whole time, on both wheel/trackpad and touch. Runs the same regardless
+   of the OS-level "reduce motion" flag (see initLoader/initCursor/initSphere
+   for the parts that still respect it). */
 function initScrollChoreography() {
   if (!window.gsap || !window.ScrollTrigger) return;
   gsap.registerPlugin(ScrollTrigger);
   ScrollTrigger.config({ ignoreMobileResize: true });
+  const hasObserver = !!window.Observer;
+  if (hasObserver) gsap.registerPlugin(Observer);
+  else console.warn('[dxles] Observer plugin unavailable — pinned sections will auto-play once instead of step-locking.');
 
   // Nav state + progress rail (motion-independent, safe for everyone)
   ScrollTrigger.create({
@@ -230,72 +240,127 @@ function initScrollChoreography() {
     });
   });
 
-  /* ---------- STEP 1 · HERO: "dxles" bleeds off-screen, scales into place ---------- */
-  const heroName = document.getElementById('hero-name');
-  gsap.timeline({
-    scrollTrigger: { trigger: '#hero', start: 'top top', end: '+=130%', scrub: 1, pin: true, anticipatePin: 1, invalidateOnRefresh: true },
-  })
-    .fromTo(heroName,
-      { scale: () => (CONFIG.isMobile ? 3.6 : 6), yPercent: 10 },
-      { scale: 1, yPercent: 0, ease: 'power2.inOut', duration: 1 })
-    .fromTo('.hero-top, .hero-bottom',
-      { opacity: 0, y: 18 },
-      { opacity: 1, y: 0, duration: 0.35, ease: 'power2.out' }, '-=0.35')
-    .to({}, { duration: 0.5 }); // hold the settled hero before handing off to Works
+  /* ---------- Reusable locked-step pinned section ---------- */
+  function createLockedSection(id, build) {
+    const section = document.getElementById(id);
+    if (!section) return;
+    const tl = gsap.timeline({ paused: true });
+    const steps = build(tl); // populates tl with labels "step0".."stepN", returns N
+    if (!steps) return;
 
-  /* ---------- STEPS 2–4 · WORKS: pinned slide-in from left, previous blurs ---------- */
-  const projects = gsap.utils.toArray('.project');
-  if (projects.length) {
-    const workTl = gsap.timeline({
-      scrollTrigger: {
-        trigger: '#work', start: 'top top',
-        end: `+=${projects.length * 95 + 60}%`, scrub: 1, pin: true,
-        anticipatePin: 1, invalidateOnRefresh: true,
-      },
-    });
-    workTl.fromTo('#work .section-head', { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.5 }, 0);
-    projects.forEach((item, i) => {
-      const at = i * 1.1 + 0.4;
-      workTl.fromTo(item,
-        { x: () => -innerWidth * 0.75, opacity: 0 },
-        { x: 0, opacity: 1, duration: 1, ease: 'power3.out' }, at);
-      if (i > 0) {
-        workTl.to(projects[i - 1], { filter: 'blur(9px)', opacity: 0.28, duration: 0.8, ease: 'power2.out' }, at);
+    let index = 0;
+    let animating = false;
+    let observer = null;
+
+    function goTo(nextIndex) {
+      animating = true;
+      tl.tweenTo(`step${nextIndex}`, {
+        duration: 0.85, ease: 'power2.inOut',
+        onComplete: () => { animating = false; },
+      });
+      index = nextIndex;
+    }
+    function next() {
+      if (animating) return;
+      if (index < steps) { goTo(index + 1); return; }
+      observer && observer.disable(); // last step done — let the next scroll pass through to the section below
+    }
+    function prev() {
+      if (animating) return;
+      if (index > 0) { goTo(index - 1); return; }
+      observer && observer.disable(); // first step's start — let scroll pass through to the section above
+    }
+    function arm() {
+      if (!hasObserver) return;
+      if (!observer) {
+        observer = Observer.create({
+          target: window, type: 'wheel,touch,pointer',
+          preventDefault: true, tolerance: 8,
+          onDown: next, onUp: prev,
+        });
+      } else {
+        observer.enable();
       }
+    }
+
+    ScrollTrigger.create({
+      trigger: section, start: 'top top', end: '+=100%',
+      pin: true, anticipatePin: 1, invalidateOnRefresh: true,
+      onEnter: () => { index = 0; tl.progress(0); hasObserver ? arm() : tl.play(); },
+      onEnterBack: () => { index = steps; tl.progress(1); arm(); },
+      onLeave: () => observer && observer.disable(),
+      onLeaveBack: () => observer && observer.disable(),
     });
-    // All works displayed together in full clarity before the Toolkit.
-    workTl.to(projects, { filter: 'blur(0px)', opacity: 1, duration: 0.8, ease: 'power2.out' }, projects.length * 1.1 + 0.5);
   }
 
-  /* ---------- STEPS 5–8 · TOOLKIT: pinned focus rotation (Languages → Systems → Interests) ---------- */
-  const cols = gsap.utils.toArray('.systems-col');
-  if (cols.length) {
+  /* ---------- STEP 1 · HERO: "dxles" bleeds off-screen, scales into place ---------- */
+  createLockedSection('hero', (tl) => {
+    const heroName = document.getElementById('hero-name');
+    if (!heroName) return 0;
+    gsap.set(heroName, { scale: CONFIG.isMobile ? 3.6 : 6, yPercent: 10 });
+    gsap.set('.hero-top, .hero-bottom', { opacity: 0, y: 18 });
+    tl.addLabel('step0')
+      .to(heroName, { scale: 1, yPercent: 0, duration: 1, ease: 'power2.inOut' })
+      .to('.hero-top, .hero-bottom', { opacity: 1, y: 0, duration: 0.35, ease: 'power2.out' }, '-=0.35')
+      .addLabel('step1');
+    return 1;
+  });
+
+  /* ---------- STEPS 2–4 · WORKS: one project slides in per scroll, previous blurs ---------- */
+  createLockedSection('work', (tl) => {
+    const projects = gsap.utils.toArray('.project');
+    if (!projects.length) return 0;
+    gsap.set(projects, { x: () => -innerWidth * 0.75, opacity: 0 });
+    gsap.set('#work .section-head', { opacity: 0, y: 24 });
+    tl.addLabel('step0').to('#work .section-head', { opacity: 1, y: 0, duration: 0.4 });
+    projects.forEach((item, i) => {
+      tl.to(item, { x: 0, opacity: 1, duration: 0.8, ease: 'power3.out' }, '>');
+      if (i > 0) {
+        tl.to(projects[i - 1], { filter: 'blur(9px)', opacity: 0.28, duration: 0.6, ease: 'power2.out' }, '<');
+      }
+      if (i === projects.length - 1) {
+        // last step also settles everything back into full clarity together
+        tl.to(projects, { filter: 'blur(0px)', opacity: 1, duration: 0.6, ease: 'power2.out' }, '>0.1');
+      }
+      tl.addLabel(`step${i + 1}`);
+    });
+    return projects.length;
+  });
+
+  /* ---------- STEPS 5–8 · TOOLKIT: one column focuses per scroll ---------- */
+  createLockedSection('systems', (tl) => {
+    const cols = gsap.utils.toArray('.systems-col');
+    if (!cols.length) return 0;
     gsap.set(cols, { filter: 'blur(14px)', opacity: 0.18 });
-    const sysTl = gsap.timeline({
-      scrollTrigger: { trigger: '#systems', start: 'top top', end: '+=340%', scrub: 1, pin: true, anticipatePin: 1 },
-    });
-    sysTl.fromTo('#systems .section-head', { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.5 }, 0);
+    gsap.set('#systems .section-head', { opacity: 0, y: 24 });
+    tl.addLabel('step0').to('#systems .section-head', { opacity: 1, y: 0, duration: 0.4 });
     cols.forEach((col, i) => {
-      const focusAt = i * 1.25 + 0.5;
-      sysTl.to(col, { filter: 'blur(0px)', opacity: 1, duration: 0.9, ease: 'power2.out' }, focusAt);
-      sysTl.to(col, { filter: 'blur(14px)', opacity: 0.18, duration: 0.9, ease: 'power2.in' }, focusAt + 1.0);
+      tl.to(col, { filter: 'blur(0px)', opacity: 1, duration: 0.7, ease: 'power2.out' }, '>');
+      if (i < cols.length - 1) {
+        tl.to(col, { filter: 'blur(6px)', opacity: 0.45, duration: 0.5, ease: 'power2.in' }, '>0.3');
+      } else {
+        tl.to(cols, { filter: 'blur(0px)', opacity: 1, duration: 0.6, ease: 'power2.out' }, '>0.1');
+      }
+      tl.addLabel(`step${i + 1}`);
     });
-  }
+    return cols.length;
+  });
 
-  /* ---------- STEPS 9–11 · ABOUT: pinned sequential bio reveal, all visible at end ---------- */
-  const blocks = gsap.utils.toArray('.about-block');
-  if (blocks.length) {
+  /* ---------- STEPS 9–11 · ABOUT: one bio block reveals per scroll ---------- */
+  createLockedSection('about', (tl) => {
+    const blocks = gsap.utils.toArray('.about-block');
+    if (!blocks.length) return 0;
     gsap.set(blocks, { opacity: 0, y: 42 });
-    const aboutTl = gsap.timeline({
-      scrollTrigger: { trigger: '#about', start: 'top top', end: '+=280%', scrub: 1, pin: true, anticipatePin: 1 },
-    });
-    aboutTl.fromTo('#about .section-head', { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.5 }, 0);
+    gsap.set('#about .section-head', { opacity: 0, y: 24 });
+    tl.addLabel('step0').to('#about .section-head', { opacity: 1, y: 0, duration: 0.4 });
     blocks.forEach((b, i) => {
-      aboutTl.to(b, { opacity: 1, y: 0, duration: 1, ease: 'power3.out' }, i * 0.95 + 0.4);
+      tl.to(b, { opacity: 1, y: 0, duration: 0.8, ease: 'power3.out' }, '>');
+      tl.addLabel(`step${i + 1}`);
     });
-  }
+    return blocks.length;
+  });
 
-  /* ---------- STEP 12 · LAB: synchronized zoom-in, capped at scale 1 ---------- */
+  /* ---------- STEP 12 · LAB: synchronized zoom-in, capped at scale 1 (not pinned, no lock needed) ---------- */
   const labItems = gsap.utils.toArray('.lab-item');
   if (labItems.length) {
     gsap.fromTo(labItems,
@@ -338,6 +403,7 @@ async function boot() {
   try {
     if (!window.gsap) await loadScript('vendor/gsap.min.js');
     if (!window.ScrollTrigger) await loadScript('vendor/ScrollTrigger.min.js');
+    if (!window.Observer) await loadScript('vendor/Observer.min.js');
   } catch (err) {
     console.warn('[dxles] GSAP unavailable — serving static, fully readable page.', err);
   }
