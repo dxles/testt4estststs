@@ -343,17 +343,25 @@ async function boot() {
   initCursor();
   initNavSmoothScroll();
   initMagneticElements();
-  initScrollChoreography();
   initSphere();
 
-  // Web fonts (Instrument Serif etc.) often swap in AFTER ScrollTrigger has
-  // already measured section heights using the fallback font. That height
-  // change desyncs every pin's start/end point from the actual scroll
-  // position — the classic cause of pinned sections overlapping/double-
-  // triggering. Recalculate once fonts are actually in place.
-  if (window.ScrollTrigger && document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(() => ScrollTrigger.refresh());
-  }
+  // ScrollTrigger computes every pin's start/end (and the spacer height that
+  // reserves scroll distance for it) from the page's layout AT THE MOMENT
+  // pin:true is set up. If web fonts (Instrument Serif etc.) haven't swapped
+  // in yet, those measurements are taken against fallback-font heights and
+  // end up wrong — which is exactly what lets two consecutive pinned
+  // sections (e.g. Work → Toolkit) briefly both be "pinned" at once: the
+  // later one in the DOM paints on top, and the page keeps visibly
+  // scrolling instead of holding still during the pin. Wait for fonts AND
+  // full page load before creating any pin, so the very first measurement
+  // is already correct — no later correction/jump needed.
+  const fontsReady = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
+  const windowLoaded = document.readyState === 'complete'
+    ? Promise.resolve()
+    : new Promise((resolve) => addEventListener('load', resolve, { once: true }));
+  await Promise.all([fontsReady, windowLoaded]);
+
+  initScrollChoreography();
 }
 
 boot();
